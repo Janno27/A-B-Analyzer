@@ -1,6 +1,7 @@
 import pandas as pd
 import numpy as np
 from typing import Dict, List, Tuple, Optional
+from scipy import stats
 
 class ABTestAnalyzer:
     def __init__(self):
@@ -73,11 +74,6 @@ class ABTestAnalyzer:
                     (transaction_metrics['revenue'] < max_val)
                 ]
             
-            # Debug pour voir les transactions de chaque plage
-            print(f"Range {range_key}: {len(range_transactions)} transactions")
-            if len(range_transactions) > 0:
-                print(f"Revenue range: {range_transactions['revenue'].min()} - {range_transactions['revenue'].max()}")
-            
             if len(range_transactions) > 0:
                 categories_count = range_transactions['item_category2'].value_counts().to_dict()
                 result[range_key] = {
@@ -96,9 +92,83 @@ class ABTestAnalyzer:
         
         return result
 
+    def calculate_statistical_significance(self, control_data: pd.Series, variation_data: pd.Series, metric_type: str) -> Tuple[float, float]:
+        """
+        Calcule la significativité statistique et l'intervalle de confiance.
+        """
+        if len(control_data) == 0 or len(variation_data) == 0:
+            return 0.0, 0.0
+
+        if metric_type == 'rate':
+            # Test de proportion (en utilisant le test binomial normal approximation)
+            p1 = variation_data.mean()  # proportion dans le groupe variation
+            p2 = control_data.mean()    # proportion dans le groupe contrôle
+            n1 = len(variation_data)    # taille du groupe variation
+            n2 = len(control_data)      # taille du groupe contrôle
+            
+            # Calcul de la proportion combinée
+            p_pooled = (p1 * n1 + p2 * n2) / (n1 + n2)
+            
+            # Calcul de l'erreur standard
+            se = np.sqrt(p_pooled * (1 - p_pooled) * (1/n1 + 1/n2))
+            
+            # Calcul de la statistique z
+            if se == 0:
+                return 0.0, 0.0
+                
+            z_stat = (p1 - p2) / se
+            
+            # Calcul de la p-value (test bilatéral)
+            p_value = 2 * (1 - stats.norm.cdf(abs(z_stat)))
+            
+            # Calcul de l'uplift
+            uplift = ((p1 - p2) / p2) * 100 if p2 > 0 else 0
+            
+        elif metric_type == 'revenue':
+            # Test de Mann-Whitney pour les métriques de revenue
+            try:
+                stat, p_value = stats.mannwhitneyu(
+                    control_data,
+                    variation_data,
+                    alternative='two-sided'
+                )
+            except ValueError:
+                return 0.0, 0.0
+            
+            control_mean = control_data.mean()
+            variation_mean = variation_data.mean()
+            uplift = ((variation_mean - control_mean) / control_mean) * 100 if control_mean != 0 else 0
+            
+        else:
+            # Test t pour les autres métriques continues
+            if len(control_data) < 2 or len(variation_data) < 2:
+                return 0.0, 0.0
+                
+            try:
+                stat, p_value = stats.ttest_ind(
+                    control_data,
+                    variation_data,
+                    equal_var=False  # Welch's t-test
+                )
+            except ValueError:
+                return 0.0, 0.0
+            
+            control_mean = control_data.mean()
+            variation_mean = variation_data.mean()
+            uplift = ((variation_mean - control_mean) / control_mean) * 100 if control_mean != 0 else 0
+
+        confidence = (1 - p_value) * 100
+        return uplift, confidence
+
     def calculate_metrics(self) -> Dict:
         results = {}
-        for variation in self.overall_data['variation'].unique():
+        variations = self.overall_data['variation'].unique()
+        control_variation = next(v for v in variations if 'control' in v.lower())
+        
+        control_overall = self.overall_data[self.overall_data['variation'] == control_variation].iloc[0]
+        control_transactions = self.transaction_data[self.transaction_data['variation'] == control_variation]
+        
+        for variation in variations:
             overall_metrics = self.overall_data[
                 self.overall_data['variation'] == variation
             ].iloc[0]
@@ -107,134 +177,185 @@ class ABTestAnalyzer:
                 self.transaction_data['variation'] == variation
             ].copy()
             
-            transaction_metrics['revenue'] = pd.to_numeric(
-                transaction_metrics['revenue'].astype(str).replace(',', '', regex=True), 
-                errors='coerce'
-            )
-            transaction_metrics['quantity'] = pd.to_numeric(
-                transaction_metrics['quantity'], 
-                errors='coerce'
-            )
-
+            # Calculs de base
             users = overall_metrics['users']
             add_to_carts = overall_metrics['user_add_to_carts']
             transactions = len(transaction_metrics['transaction_id'].unique())
             revenue = transaction_metrics['revenue'].sum()
 
-            aov = revenue / transactions if transactions > 0 else 0
-            rpu = revenue / users if users > 0 else 0
+            # Calcul des taux
+            add_to_cart_rate = (add_to_carts / users) * 100 if users > 0 else 0
+            transaction_rate = (transactions / users) * 100 if users > 0 else 0
 
-            if len(transaction_metrics) > 0:
-                # Grouper par transaction pour trouver les transactions extrêmes
-                transactions_grouped = transaction_metrics.groupby('transaction_id').agg({
-                    'revenue': 'sum',
-                    'quantity': 'sum'
-                }).reset_index()
-                
-                # Pour la transaction la plus élevée
-                highest_trans_id = transactions_grouped.nlargest(1, 'revenue').iloc[0]['transaction_id']
-                highest_trans_details = transaction_metrics[transaction_metrics['transaction_id'] == highest_trans_id]
-                
-                # Trouver le produit le plus cher dans cette transaction
-                main_product_high = highest_trans_details.nlargest(1, 'revenue').iloc[0]
-                categories_high = list(highest_trans_details['item_category2'].unique())
-                
-                highest_transaction = {
-                    'transaction_id': str(highest_trans_id),
-                    'revenue': float(transactions_grouped.loc[transactions_grouped['transaction_id'] == highest_trans_id, 'revenue'].iloc[0]),
-                    'quantity': int(transactions_grouped.loc[transactions_grouped['transaction_id'] == highest_trans_id, 'quantity'].iloc[0]),
-                    'main_product': main_product_high.get('item_name_simple', 'N/A'),
-                    'item_categories': categories_high
-                }
-                
-                # Pour la transaction la plus basse
-                lowest_trans_id = transactions_grouped.nsmallest(1, 'revenue').iloc[0]['transaction_id']
-                lowest_trans_details = transaction_metrics[transaction_metrics['transaction_id'] == lowest_trans_id]
-                
-                # Trouver le produit le plus cher dans cette transaction
-                main_product_low = lowest_trans_details.nlargest(1, 'revenue').iloc[0]
-                categories_low = list(lowest_trans_details['item_category2'].unique())
-                
-                lowest_transaction = {
-                    'transaction_id': str(lowest_trans_id),
-                    'revenue': float(transactions_grouped.loc[transactions_grouped['transaction_id'] == lowest_trans_id, 'revenue'].iloc[0]),
-                    'quantity': int(transactions_grouped.loc[transactions_grouped['transaction_id'] == lowest_trans_id, 'quantity'].iloc[0]),
-                    'main_product': main_product_low.get('item_name_simple', 'N/A'),
-                    'item_categories': categories_low
-                }
-            else:
-                highest_transaction = lowest_transaction = None
-
-            # Ajouter la distribution des revenus
-            revenue_distribution = self.calculate_revenue_ranges(transaction_metrics)
-
+            # Initialiser le dictionnaire des résultats pour cette variation
             results[variation] = {
                 'users': users,
-                'add_to_carts': add_to_carts,
-                'add_to_cart_rate': (add_to_carts / users) * 100 if users > 0 else 0,
-                'transactions': transactions,
-                'transaction_rate': (transactions / users) * 100 if users > 0 else 0,
-                'revenue': revenue,
-                'aov': aov,
-                'rpu': rpu,
-                'highest_transaction': highest_transaction,
-                'lowest_transaction': lowest_transaction,
-                'revenue_distribution': revenue_distribution
+                'add_to_cart_rate': add_to_cart_rate,
+                'transaction_rate': transaction_rate,
+                'revenue': revenue
             }
 
-        # Debug logging
-        print("Debug - Revenue Distribution:", {
-            variation: results[variation]['revenue_distribution'] 
-            for variation in results
-        })
-        
+            # Calcul des transactions extrêmes
+            if len(transaction_metrics) > 0:
+                # Grouper les transactions
+                transactions_grouped = transaction_metrics.groupby('transaction_id').agg({
+                    'revenue': 'sum',
+                    'quantity': 'sum',
+                    'item_name_simple': lambda x: list(x),
+                    'item_category2': lambda x: list(set(x))
+                }).reset_index()
+
+                # Plus haute transaction
+                highest_trans = transactions_grouped.nlargest(1, 'revenue').iloc[0]
+                highest_transaction = {
+                    'transaction_id': str(highest_trans['transaction_id']),
+                    'revenue': float(highest_trans['revenue']),
+                    'quantity': int(highest_trans['quantity']),
+                    'main_product': highest_trans['item_name_simple'][0],
+                    'item_categories': list(highest_trans['item_category2'])
+                }
+
+                # Plus basse transaction
+                lowest_trans = transactions_grouped.nsmallest(1, 'revenue').iloc[0]
+                lowest_transaction = {
+                    'transaction_id': str(lowest_trans['transaction_id']),
+                    'revenue': float(lowest_trans['revenue']),
+                    'quantity': int(lowest_trans['quantity']),
+                    'main_product': lowest_trans['item_name_simple'][0],
+                    'item_categories': list(lowest_trans['item_category2'])
+                }
+            else:
+                highest_transaction = None
+                lowest_transaction = None
+
+            # Ajouter les transactions extrêmes aux résultats
+            results[variation]['highest_transaction'] = highest_transaction
+            results[variation]['lowest_transaction'] = lowest_transaction
+
+            # Calculer les statistiques si ce n'est pas le groupe de contrôle
+            if variation != control_variation:
+                # Users (metric continue)
+                users_uplift, users_confidence = self.calculate_statistical_significance(
+                    self.overall_data[self.overall_data['variation'] == control_variation]['users'],
+                    self.overall_data[self.overall_data['variation'] == variation]['users'],
+                    'continuous'
+                )
+                results[variation]['users_uplift'] = users_uplift
+                results[variation]['users_confidence'] = users_confidence
+
+                # Add to Cart Rate (taux)
+                control_atc_rate = pd.Series([1] * int(control_overall['user_add_to_carts']) + 
+                                           [0] * int(control_overall['users'] - control_overall['user_add_to_carts']))
+                variation_atc_rate = pd.Series([1] * int(overall_metrics['user_add_to_carts']) + 
+                                             [0] * int(overall_metrics['users'] - overall_metrics['user_add_to_carts']))
+                
+                atc_uplift, atc_confidence = self.calculate_statistical_significance(
+                    control_atc_rate,
+                    variation_atc_rate,
+                    'rate'
+                )
+                results[variation]['add_to_cart_rate_uplift'] = atc_uplift
+                results[variation]['add_to_cart_rate_confidence'] = atc_confidence
+
+                # Transaction Rate (taux)
+                control_tr_rate = pd.Series([1] * len(control_transactions['transaction_id'].unique()) + 
+                                          [0] * int(control_overall['users'] - len(control_transactions['transaction_id'].unique())))
+                variation_tr_rate = pd.Series([1] * transactions + 
+                                            [0] * int(users - transactions))
+                
+                tr_uplift, tr_confidence = self.calculate_statistical_significance(
+                    control_tr_rate,
+                    variation_tr_rate,
+                    'rate'
+                )
+                results[variation]['transaction_rate_uplift'] = tr_uplift
+                results[variation]['transaction_rate_confidence'] = tr_confidence
+
+                # Revenue (Mann-Whitney test)
+                control_revenue = control_transactions.groupby('transaction_id')['revenue'].sum()
+                variation_revenue = transaction_metrics.groupby('transaction_id')['revenue'].sum()
+                
+                revenue_uplift, revenue_confidence = self.calculate_statistical_significance(
+                    control_revenue,
+                    variation_revenue,
+                    'revenue'
+                )
+                results[variation]['revenue_uplift'] = revenue_uplift
+                results[variation]['revenue_confidence'] = revenue_confidence
+
+        # Ajouter les données brutes
+        results['raw_data'] = self.get_raw_data()
         return results
 
-    def format_currency(self, value: float, currency: str) -> str:
-        if currency == 'EUR':
-            return f"€{value:,.2f}"
-        elif currency == 'BRL':
-            return f"R${value:,.2f}"
-        return f"{value:,.2f}"
+    def format_currency(self, value: float, currency: str = 'BRL') -> str:
+        try:
+            if pd.isna(value) or value == 0:
+                return 'R$ 0,00' if currency == 'BRL' else '€0,00'
+            
+            # Formater le nombre avec séparateur de milliers et décimales
+            formatted_number = '{:,.2f}'.format(value)
+            
+            # Adapter au format brésilien
+            if currency == 'BRL':
+                formatted_number = formatted_number.replace(',', 'X').replace('.', ',').replace('X', '.')
+                return f'R$ {formatted_number}'
+            else:
+                return f'€ {formatted_number}'
+            
+        except (ValueError, TypeError):
+            return 'R$ 0,00' if currency == 'BRL' else '€0,00'
 
     def format_metrics(self, metrics: Dict, currency: str = 'EUR') -> Dict:
         formatted = {}
         for variation, data in metrics.items():
+            if variation == 'raw_data':
+                formatted['raw_data'] = data
+                continue
+                
             formatted[variation] = {
                 'users': f"{data['users']:,.0f}",
-                'add_to_carts': f"{data['add_to_carts']:,.0f}",
                 'add_to_cart_rate': f"{data['add_to_cart_rate']:.2f}%",
-                'transactions': f"{data['transactions']:,.0f}",
                 'transaction_rate': f"{data['transaction_rate']:.2f}%",
-                'revenue': self.format_currency(data['revenue'], currency),
-                'aov': self.format_currency(data['aov'], currency),
-                'rpu': self.format_currency(data['rpu'], currency),
-                'highest_transaction': (
-                    {
-                        'transaction_id': data['highest_transaction']['transaction_id'],
-                        'revenue': self.format_currency(data['highest_transaction']['revenue'], currency),
-                        'quantity': data['highest_transaction']['quantity'],
-                        'main_product': data['highest_transaction']['main_product'],
-                        'item_categories': data['highest_transaction']['item_categories']
-                    } if data.get('highest_transaction') else None
-                ),
-                'lowest_transaction': (
-                    {
-                        'transaction_id': data['lowest_transaction']['transaction_id'],
-                        'revenue': self.format_currency(data['lowest_transaction']['revenue'], currency),
-                        'quantity': data['lowest_transaction']['quantity'],
-                        'main_product': data['lowest_transaction']['main_product'],
-                        'item_categories': data['lowest_transaction']['item_categories']
-                    } if data.get('lowest_transaction') else None
-                ),
-                'revenue_distribution': {
-                    range_label: {
-                        'count': stats['count'],
-                        'total_revenue': self.format_currency(stats['total_revenue'], currency),
-                        'aov': self.format_currency(stats['aov'], currency),
-                        'categories': stats['categories']
-                    }
-                    for range_label, stats in data['revenue_distribution'].items()
-                }
+                'revenue': self.format_currency(data['revenue'], currency)
             }
+            
+            # Formater les transactions extrêmes si elles existent
+            if data.get('highest_transaction'):
+                formatted[variation]['highest_transaction'] = {
+                    **data['highest_transaction'],
+                    'revenue': self.format_currency(data['highest_transaction']['revenue'], currency)
+                }
+            else:
+                formatted[variation]['highest_transaction'] = None
+
+            if data.get('lowest_transaction'):
+                formatted[variation]['lowest_transaction'] = {
+                    **data['lowest_transaction'],
+                    'revenue': self.format_currency(data['lowest_transaction']['revenue'], currency)
+                }
+            else:
+                formatted[variation]['lowest_transaction'] = None
+            
+            # Formater les métriques statistiques
+            for metric in ['users', 'add_to_cart_rate', 'transaction_rate', 'revenue']:
+                if f'{metric}_uplift' in data:
+                    formatted[variation][f'{metric}_uplift'] = f"{'+' if data[f'{metric}_uplift'] >= 0 else ''}{data[f'{metric}_uplift']:.2f}%"
+                    formatted[variation][f'{metric}_confidence'] = f"{data[f'{metric}_confidence']:.1f}"
+
         return formatted
+    def get_raw_data(self) -> Dict[str, List[Dict]]:
+            """
+            Récupère les données brutes groupées par variation.
+            """
+            if self.transaction_data is None:
+                return {"error": "No transaction data available"}
+
+            # Groupe les données par variation
+            result = {}
+            for variation in self.transaction_data['variation'].unique():
+                variation_data = self.transaction_data[self.transaction_data['variation'] == variation]
+                result[variation] = variation_data.to_dict('records')
+
+            return {
+                "raw_data": result
+            }
