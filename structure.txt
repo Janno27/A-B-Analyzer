@@ -1,0 +1,35 @@
+src
+├── app
+│   ├── favicon.ico
+│   ├── fonts
+│   │   ├── GeistMonoVF.woff
+│   │   └── GeistVF.woff
+│   ├── globals.css
+│   ├── layout.tsx
+│   └── page.tsx
+├── components
+│   ├── test
+│   │   ├── ABTestInterface.tsx
+│   │   ├── FileUpload.tsx
+│   │   ├── FiltersSection.tsx
+│   │   ├── OutliersCard.tsx
+│   │   ├── RawDataTable.tsx
+│   │   ├── ResultsTable.tsx
+│   │   ├── RevenueRadarChart.tsx
+│   │   └── StatCell.tsx
+│   └── ui
+│       ├── alert.tsx
+│       ├── button.tsx
+│       ├── card.tsx
+│       ├── checkbox.tsx
+│       ├── label.tsx
+│       ├── scroll-area.tsx
+│       ├── select.tsx
+│       ├── switch.tsx
+│       ├── table.tsx
+│       ├── tabs.tsx
+│       └── tooltip.tsx
+└── lib
+    └── utils.ts
+
+7 directories, 26 files
