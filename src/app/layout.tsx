@@ -1,1 +1,39 @@
-Ly8gQXBwIGxheW91dCBjb21wb25lbnQKaW1wb3J0IHsgY24gfSBmcm9tICJAL2xpYi91dGlscyIKaW1wb3J0IHsgU2lkZWJhciB9IGZyb20gIkAvY29tcG9uZW50cy9sYXlvdXQvc2lkZWJhciIKaW1wb3J0IHsgSW50ZXIgfSBmcm9tICJuZXh0L2ZvbnQvZ29vZ2xlIgoKY29uc3QgaW50ZXIgPSBJbnRlcih7IHN1YnNldHM6IFsibGF0aW4iXSB9KQoKZXhwb3J0IGRlZmF1bHQgZnVuY3Rpb24gUm9vdExheW91dCh7CiAgY2hpbGRyZW4sCn06IHsKICBjaGlsZHJlbjogUmVhY3QuUmVhY3ROb2RlCn0pIHsKICByZXR1cm4gKAogICAgPGh0bWwgbGFuZz0iZW4iIGNsYXNzTmFtZT0iZGFyayI+CiAgICAgIDxib2R5IGNsYXNzTmFtZT17Y24oIm1pbi1oLXNjcmVlbiBiZy1iYWNrZ3JvdW5kIGZvbnQtc2FucyBhbnRpYWxpYXNlZCIsIGludGVyLmNsYXNzTmFtZSl9PgogICAgICAgIDxkaXYgY2xhc3NOYW1lPSJmbGV4IG1pbi1oLXNjcmVlbiI+CiAgICAgICAgICA8ZGl2IGNsYXNzTmFtZT0iaGlkZGVuIGxnOmJsb2NrIGxnOnctNzIgbGc6Ym9yZGVyLXIiPgogICAgICAgICAgICA8ZGl2IGNsYXNzTmFtZT0iaC1mdWxsIHB5LTYiPgogICAgICAgICAgICAgIDxTaWRlYmFyIC8+CiAgICAgICAgICAgIDwvZGl2PgogICAgICAgICAgPC9kaXY+CiAgICAgICAgICA8ZGl2IGNsYXNzTmFtZT0iZmxleC0xIj4KICAgICAgICAgICAgPG1haW4gY2xhc3NOYW1lPSJoLWZ1bGwiPntjaGlsZHJlbn08L21haW4+CiAgICAgICAgICA8L2Rpdj4KICAgICAgICA8L2Rpdj4KICAgICAgPC9ib2R5PgogICAgPC9odG1sPgogICkKfQ==
+import { Inter } from "next/font/google"
+import { cn } from "@/lib/utils"
+import { ThemeProvider } from "@/components/theme-provider"
+import { Sidebar } from "@/components/layout/sidebar"
+
+import "@/styles/globals.css"
+
+const inter = Inter({ subsets: ["latin"], variable: "--font-sans" })
+
+export const metadata = {
+  title: "Experimentation Platform",
+  description: "A complete platform for A/B testing and experimentation management",
+}
+
+interface RootLayoutProps {
+  children: React.ReactNode
+}
+
+export default function RootLayout({ children }: RootLayoutProps) {
+  return (
+    <html lang="en" suppressHydrationWarning>
+      <head />
+      <body className={cn("min-h-screen bg-background font-sans antialiased", inter.variable)}>
+        <ThemeProvider attribute="class" defaultTheme="dark" enableSystem>
+          <div className="flex h-screen overflow-hidden">
+            <aside className="hidden lg:block w-72 border-r bg-background">
+              <Sidebar />
+            </aside>
+            <main className="flex-1 overflow-y-auto">
+              <div className="container py-6">
+                {children}
+              </div>
+            </main>
+          </div>
+        </ThemeProvider>
+      </body>
+    </html>
+  )
+}

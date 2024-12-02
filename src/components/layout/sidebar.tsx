@@ -1,3 +1,5 @@
+"use client"
+
 import Link from "next/link"
 import { usePathname } from "next/navigation"
 import { cn } from "@/lib/utils"
@@ -7,15 +9,13 @@ import {
   Blocks,
   BookOpen,
   FlaskConical,
-  History,
   LayoutDashboard,
   Library,
   PlugZap,
   ScrollText,
   Settings,
-  Star,
   Trello,
-  TimerIcon,
+  Clock,
 } from "lucide-react"
 
 interface SidebarProps extends React.HTMLAttributes<HTMLDivElement> {}
@@ -27,77 +27,79 @@ export function Sidebar({ className }: SidebarProps) {
     <div className={cn("pb-12", className)}>
       <div className="space-y-4 py-4">
         <div className="px-3 py-2">
-          <h2 className="mb-2 px-4 text-lg font-semibold">Platform</h2>
+          <h2 className="mb-2 px-4 text-lg font-semibold tracking-tight">Platform</h2>
           <div className="space-y-1">
-            <Link href="/playground">
-              <Button variant="ghost" className="w-full justify-start">
+            <Button asChild variant={pathname === "/playground" ? "secondary" : "ghost"} className="w-full justify-start">
+              <Link href="/playground">
                 <FlaskConical className="mr-2 h-4 w-4" />
                 Playground
-              </Button>
-            </Link>
-            <Link href="/playground/overview">
-              <Button variant="ghost" className="w-full justify-start pl-8">
+              </Link>
+            </Button>
+            <Button asChild variant={pathname === "/playground/overview" ? "secondary" : "ghost"} className="w-full justify-start pl-8">
+              <Link href="/playground/overview">
                 <LayoutDashboard className="mr-2 h-4 w-4" />
                 Overview
-              </Button>
-            </Link>
-            <Link href="/playground/initialization">
-              <Button variant="ghost" className="w-full justify-start pl-8">
+              </Link>
+            </Button>
+            <Button asChild variant={pathname === "/playground/initialization" ? "secondary" : "ghost"} className="w-full justify-start pl-8">
+              <Link href="/playground/initialization">
                 <ScrollText className="mr-2 h-4 w-4" />
                 Initialization
-              </Button>
-            </Link>
-            <Link href="/playground/kanban">
-              <Button variant="ghost" className="w-full justify-start pl-8">
+              </Link>
+            </Button>
+            <Button asChild variant={pathname === "/playground/kanban" ? "secondary" : "ghost"} className="w-full justify-start pl-8">
+              <Link href="/playground/kanban">
                 <Trello className="mr-2 h-4 w-4" />
                 Kanban
-              </Button>
-            </Link>
-            <Link href="/playground/roadmap">
-              <Button variant="ghost" className="w-full justify-start pl-8">
-                <TimerIcon className="mr-2 h-4 w-4" />
+              </Link>
+            </Button>
+            <Button asChild variant={pathname === "/playground/roadmap" ? "secondary" : "ghost"} className="w-full justify-start pl-8">
+              <Link href="/playground/roadmap">
+                <Clock className="mr-2 h-4 w-4" />
                 Roadmap
-              </Button>
-            </Link>
-            <Link href="/playground/analyzer">
-              <Button variant="ghost" className="w-full justify-start pl-8">
+              </Link>
+            </Button>
+            <Button asChild variant={pathname === "/playground/analyzer" ? "secondary" : "ghost"} className="w-full justify-start pl-8">
+              <Link href="/playground/analyzer">
                 <BarChart2 className="mr-2 h-4 w-4" />
                 A/B Test Analyzer
-              </Button>
-            </Link>
+              </Link>
+            </Button>
           </div>
         </div>
+
         <div className="px-3 py-2">
-          <h2 className="mb-2 px-4 text-lg font-semibold">Tools</h2>
+          <h2 className="mb-2 px-4 text-lg font-semibold tracking-tight">Tools</h2>
           <div className="space-y-1">
-            <Link href="/library">
-              <Button variant="ghost" className="w-full justify-start">
+            <Button asChild variant={pathname === "/library" ? "secondary" : "ghost"} className="w-full justify-start">
+              <Link href="/library">
                 <Library className="mr-2 h-4 w-4" />
                 Library
-              </Button>
-            </Link>
-            <Link href="/documentation">
-              <Button variant="ghost" className="w-full justify-start">
+              </Link>
+            </Button>
+            <Button asChild variant={pathname === "/documentation" ? "secondary" : "ghost"} className="w-full justify-start">
+              <Link href="/documentation">
                 <BookOpen className="mr-2 h-4 w-4" />
                 Documentation
-              </Button>
-            </Link>
-            <Link href="/integration">
-              <Button variant="ghost" className="w-full justify-start">
+              </Link>
+            </Button>
+            <Button asChild variant={pathname === "/integration" ? "secondary" : "ghost"} className="w-full justify-start">
+              <Link href="/integration">
                 <PlugZap className="mr-2 h-4 w-4" />
                 Integration
-              </Button>
-            </Link>
-            <Link href="/settings">
-              <Button variant="ghost" className="w-full justify-start">
+              </Link>
+            </Button>
+            <Button asChild variant={pathname === "/settings" ? "secondary" : "ghost"} className="w-full justify-start">
+              <Link href="/settings">
                 <Settings className="mr-2 h-4 w-4" />
                 Settings
-              </Button>
-            </Link>
+              </Link>
+            </Button>
           </div>
         </div>
+
         <div className="px-3 py-2">
-          <h2 className="mb-2 px-4 text-lg font-semibold">Projects</h2>
+          <h2 className="mb-2 px-4 text-lg font-semibold tracking-tight">Projects</h2>
           <div className="space-y-1">
             <Button variant="ghost" className="w-full justify-start">
               <Blocks className="mr-2 h-4 w-4" />
