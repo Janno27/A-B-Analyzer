@@ -9,19 +9,20 @@ class ABTestAnalyzer:
         self.transaction_data = None
 
     def load_overall_data(self, data: List[Dict]) -> None:
-        self.overall_data = pd.DataFrame(data)
-        self.overall_data = self.overall_data[
-            self.overall_data['item_category2'] == '((Total))'
-        ]
-        
-        numeric_cols = ['sessions', 'users', 'user_pdp_views', 'user_add_to_carts', 
-                       'user_begin_checkouts', 'user_purchases', 'purchases', 'quantity']
-        for col in numeric_cols:
-            if col in self.overall_data.columns:
-                self.overall_data[col] = pd.to_numeric(
-                    self.overall_data[col].astype(str).str.replace(',', ''), 
-                    errors='coerce'
-                )
+        try:
+            self.overall_data = pd.DataFrame(data)
+            # Ne garder que les colonnes nécessaires
+            essential_columns = ['variation', 'users', 'user_add_to_carts']
+            
+            # Convertir users et user_add_to_carts en numérique
+            for col in ['users', 'user_add_to_carts']:
+                if col in self.overall_data.columns:
+                    self.overall_data[col] = pd.to_numeric(
+                        self.overall_data[col].astype(str).str.replace(',', ''), 
+                        errors='coerce'
+                    )
+        except Exception as e:
+            raise ValueError(f"Error processing overall data: {str(e)}")
 
     def load_transaction_data(self, data: List[Dict]) -> None:
         self.transaction_data = pd.DataFrame(data)
@@ -94,38 +95,41 @@ class ABTestAnalyzer:
 
     def calculate_statistical_significance(self, control_data: pd.Series, variation_data: pd.Series, metric_type: str) -> Tuple[float, float]:
         """
-        Calcule la significativité statistique et l'intervalle de confiance.
+        Calcule la significativité statistique en utilisant différents tests selon le type de métrique :
+        - Test de proportion pour les taux
+        - Test de Mann-Whitney pour les métriques de revenue et conversion
+        - Test t de Student pour les autres métriques
+        
+        Args:
+            control_data: Données du groupe de contrôle
+            variation_data: Données de la variation
+            metric_type: Type de métrique ('rate', 'revenue', 'add_to_cart_rate', 'transaction_rate', ou autre)
+        
+        Returns:
+            Tuple[float, float]: (uplift en pourcentage, niveau de confiance en pourcentage)
         """
         if len(control_data) == 0 or len(variation_data) == 0:
             return 0.0, 0.0
 
         if metric_type == 'rate':
-            # Test de proportion (en utilisant le test binomial normal approximation)
-            p1 = variation_data.mean()  # proportion dans le groupe variation
-            p2 = control_data.mean()    # proportion dans le groupe contrôle
-            n1 = len(variation_data)    # taille du groupe variation
-            n2 = len(control_data)      # taille du groupe contrôle
+            # Test de proportion pour les taux
+            p1 = variation_data.mean()
+            p2 = control_data.mean()
+            n1 = len(variation_data)
+            n2 = len(control_data)
             
-            # Calcul de la proportion combinée
             p_pooled = (p1 * n1 + p2 * n2) / (n1 + n2)
-            
-            # Calcul de l'erreur standard
             se = np.sqrt(p_pooled * (1 - p_pooled) * (1/n1 + 1/n2))
             
-            # Calcul de la statistique z
             if se == 0:
                 return 0.0, 0.0
                 
             z_stat = (p1 - p2) / se
-            
-            # Calcul de la p-value (test bilatéral)
             p_value = 2 * (1 - stats.norm.cdf(abs(z_stat)))
-            
-            # Calcul de l'uplift
             uplift = ((p1 - p2) / p2) * 100 if p2 > 0 else 0
             
-        elif metric_type == 'revenue':
-            # Test de Mann-Whitney pour les métriques de revenue
+        elif metric_type in ['revenue', 'add_to_cart_rate', 'transaction_rate']:
+            # Mann-Whitney pour les métriques liées au revenue et aux taux de conversion
             try:
                 stat, p_value = stats.mannwhitneyu(
                     control_data,
@@ -140,7 +144,7 @@ class ABTestAnalyzer:
             uplift = ((variation_mean - control_mean) / control_mean) * 100 if control_mean != 0 else 0
             
         else:
-            # Test t pour les autres métriques continues
+            # Test t pour les autres métriques (comme users)
             if len(control_data) < 2 or len(variation_data) < 2:
                 return 0.0, 0.0
                 
@@ -148,7 +152,7 @@ class ABTestAnalyzer:
                 stat, p_value = stats.ttest_ind(
                     control_data,
                     variation_data,
-                    equal_var=False  # Welch's t-test
+                    equal_var=False
                 )
             except ValueError:
                 return 0.0, 0.0

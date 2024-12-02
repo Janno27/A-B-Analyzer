@@ -232,7 +232,12 @@ export default function ABTestInterface() {
                   currency={currency}
                   locale={currency === 'EUR' ? 'fr-FR' : 'pt-BR'}
                 />
-                <OutliersCard data={results} />
+                <OutliersCard 
+                  overallData={overallData?.content}
+                  transactionData={transactionData?.content}
+                  filters={filters}
+                  currency={currency}
+                />
               </div>
             </TabsContent>
 

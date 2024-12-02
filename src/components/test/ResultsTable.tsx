@@ -9,11 +9,11 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { cn } from "@/lib/utils";
+import { Loader2 } from "lucide-react";
 
 interface ResultsTableProps {
-  overallData: any[];
-  transactionData: any[];
+  overallData: { content?: any[] } | any[];
+  transactionData: { content?: any[] } | any[];
   filters: {
     device_category: string[];
     item_category2: string[];
@@ -21,65 +21,47 @@ interface ResultsTableProps {
   currency: string;
 }
 
-const metrics = [
-  { key: 'users', label: 'Users' },
-  { key: 'add_to_cart_rate', label: 'Add to Cart Rate' },
-  { key: 'transaction_rate', label: 'Transaction Rate' },
-  { key: 'revenue', label: 'Revenue' }
-];
-
-export function ResultsTable({ 
-  overallData,
-  transactionData,
-  filters,
-  currency
-}: ResultsTableProps) {
+export function ResultsTable({ overallData, transactionData, filters, currency }: ResultsTableProps) {
   const [results, setResults] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     const fetchData = async () => {
-      if (!overallData || !transactionData) return;
+      const processedOverallData = Array.isArray(overallData) 
+        ? overallData 
+        : overallData?.content || [];
+      
+      const processedTransactionData = Array.isArray(transactionData)
+        ? transactionData
+        : transactionData?.content || [];
+
+      if (!processedOverallData.length || !processedTransactionData.length) return;
 
       setLoading(true);
       try {
-        // Transformer les données overall en liste si nécessaire
-        const processedOverallData = Array.isArray(overallData) 
-          ? overallData 
-          : overallData.content || [];
-
-        const requestData = {
-          overall_data: processedOverallData,
-          transaction_data: transactionData,
-          filters: {
-            device_category: Array.isArray(filters?.device_category) ? filters.device_category : [],
-            item_category2: Array.isArray(filters?.item_category2) ? filters.item_category2 : []
-          },
-          currency: currency || 'EUR'
-        };
-
-        console.log("Sending request data:", requestData);
-
         const response = await fetch('http://localhost:8000/analyze', {
           method: 'POST',
-          headers: { 
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify(requestData)
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            overall_data: processedOverallData.filter(item => item.item_category2 === '((Total))'),
+            transaction_data: processedTransactionData,
+            filters,
+            currency
+          })
         });
 
+        const data = await response.json();
+        console.log('Received results:', data);
+        
         if (!response.ok) {
-          const errorData = await response.json();
-          console.error("API Error response:", errorData);
-          throw new Error(errorData.detail || 'Failed to fetch metrics data');
+          throw new Error(data.detail || 'Failed to fetch data');
         }
 
-        const data = await response.json();
         setResults(data);
       } catch (err) {
-        console.error('Error details:', err);
-        setError(err instanceof Error ? err.message : 'Unknown error');
+        console.error('Error:', err);
+        setError(err instanceof Error ? err.message : 'Failed to load data');
       } finally {
         setLoading(false);
       }
@@ -88,114 +70,110 @@ export function ResultsTable({
     fetchData();
   }, [overallData, transactionData, filters, currency]);
 
-  if (loading) {
-    return <div className="rounded-md border p-4 text-center">Loading...</div>;
-  }
-
-  if (error) {
-    return (
-      <div className="rounded-md border p-4 text-center text-sm text-red-600">
-        {error}
-      </div>
-    );
-  }
-
+  if (loading) return <div className="w-full text-center p-4"><Loader2 className="h-8 w-8 animate-spin inline" /></div>;
+  if (error) return <div className="w-full text-center p-4 text-red-500">{error}</div>;
   if (!results) return null;
 
-  // Trouver la variation de contrôle
-  const controlVariation = Object.keys(results).find(key => 
-    key.toLowerCase().includes('control')
-  );
+  const variations = Object.keys(results).filter(key => key !== 'raw_data');
+  const controlVariation = variations.find(v => v.toLowerCase().includes('control'));
 
-  if (!controlVariation) return <div>No control variation found in data</div>;
-
-  // Déterminer la couleur de l'uplift
-  const getUpliftColor = (upliftStr: string): string => {
-    const upliftValue = parseFloat(upliftStr);
-    if (upliftValue > 0) return 'text-green-600';
-    if (upliftValue < 0) return 'text-red-600';
-    return 'text-gray-600';
+  const getBestValue = (metric: string) => {
+    return Math.max(...variations.map(v => {
+      const value = results[v][metric];
+      return parseFloat(value?.toString().replace(/[^0-9.-]+/g, '')) || 0;
+    }));
   };
 
-  // Trouver la valeur la plus élevée pour un metric donné
-  const findHighestValue = (metric: string): number => {
-    let maxValue = -Infinity;
-    Object.entries(results).forEach(([variation, data]: [string, any]) => {
-      if (variation !== 'raw_data') {
-        const value = parseFloat(data[metric].toString().replace(/[^0-9.-]+/g, ''));
-        if (!isNaN(value) && value > maxValue) {
-          maxValue = value;
-        }
-      }
-    });
-    return maxValue;
+  const isBestValue = (value: string | number, bestValue: number) => {
+    const cleanValue = value?.toString().replace(/[^0-9.-]+/g, '');
+    return parseFloat(cleanValue || '0') === bestValue;
   };
 
   return (
-    <div className="rounded-md border">
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead className="w-[150px]">Metric</TableHead>
-            {Object.keys(results)
-              .filter(variation => variation !== 'raw_data')
-              .map(variation => (
-                <TableHead key={variation} className="text-center">
-                  {variation}
-                </TableHead>
-              ))
-            }
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {metrics.map(({ key, label }) => {
-            const highestValue = findHighestValue(key);
-            
-            return (
-              <TableRow key={key}>
-                <TableCell className="font-medium">{label}</TableCell>
-                {Object.entries(results)
-                  .filter(([variation]) => variation !== 'raw_data')
-                  .map(([variation, data]: [string, any]) => {
-                    const value = data[key];
-                    const numericalValue = parseFloat(value.toString().replace(/[^0-9.-]+/g, ''));
-                    const isHighest = !isNaN(numericalValue) && numericalValue === highestValue;
-                    const isControlVariation = variation === controlVariation;
+    <Table>
+      <TableHeader>
+        <TableRow>
+          <TableHead>Variation</TableHead>
+          <TableHead className="text-right">Users</TableHead>
+          <TableHead className="text-right">Add to Cart</TableHead>
+          <TableHead className="text-right">Transaction</TableHead>
+          <TableHead className="text-right">Revenue</TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {variations.map(variation => {
+          const bestUsers = getBestValue('users');
+          const bestAddToCart = getBestValue('add_to_cart_rate');
+          const bestTransaction = getBestValue('transaction_rate');
+          const bestRevenue = getBestValue('revenue');
 
-                    return (
-                      <TableCell key={variation} className="relative">
-                        <div className="flex flex-col items-center">
-                          {/* Valeur principale centrée */}
-                          <div className={cn(
-                            "text-center",
-                            isHighest && "font-semibold"
-                          )}>
-                            {value}
-                          </div>
-
-                          {/* Uplift et confiance statistique alignés à droite */}
-                          {!isControlVariation && (
-                            <div className="flex flex-col items-end w-full">
-                              <div className={cn(
-                                "text-right",
-                                getUpliftColor(data[`${key}_uplift`])
-                              )}>
-                                {data[`${key}_uplift`]}
-                              </div>
-                              <div className="text-right text-sm text-gray-500">
-                                {data[`${key}_confidence`] && `${data[`${key}_confidence`]}% confidence`}
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                      </TableCell>
-                    );
-                  })}
-              </TableRow>
-            );
-          })}
-        </TableBody>
-      </Table>
-    </div>
+          return (
+            <TableRow key={variation}>
+              <TableCell className="font-medium">{variation.split('_').pop()}</TableCell>
+              
+              <TableCell className="text-right">
+                <div className={isBestValue(results[variation].users, bestUsers) ? 'font-bold text-black' : ''}>
+                  {results[variation].users}
+                </div>
+              </TableCell>
+              
+              <TableCell className="text-right">
+                <div className={isBestValue(results[variation].add_to_cart_rate, bestAddToCart) ? 'font-bold text-black' : ''}>
+                  {results[variation].add_to_cart_rate}
+                </div>
+                {variation !== controlVariation && (
+                  <>
+                    <div className="text-sm">
+                      <span className={`${results[variation].add_to_cart_rate_uplift?.startsWith('+') ? 'text-green-600' : 'text-red-600'}`}>
+                        {results[variation].add_to_cart_rate_uplift}
+                      </span>
+                    </div>
+                    <div className="text-sm text-gray-500">
+                      {results[variation].add_to_cart_rate_confidence}% conf.
+                    </div>
+                  </>
+                )}
+              </TableCell>
+              
+              <TableCell className="text-right">
+                <div className={isBestValue(results[variation].transaction_rate, bestTransaction) ? 'font-bold text-black' : ''}>
+                  {results[variation].transaction_rate}
+                </div>
+                {variation !== controlVariation && (
+                  <>
+                    <div className="text-sm">
+                      <span className={`${results[variation].transaction_rate_uplift?.startsWith('+') ? 'text-green-600' : 'text-red-600'}`}>
+                        {results[variation].transaction_rate_uplift}
+                      </span>
+                    </div>
+                    <div className="text-sm text-gray-500">
+                      {results[variation].transaction_rate_confidence}% conf.
+                    </div>
+                  </>
+                )}
+              </TableCell>
+              
+              <TableCell className="text-right">
+                <div className={isBestValue(results[variation].revenue, bestRevenue) ? 'font-bold text-black' : 'text-gray-600'}>
+                  {results[variation].revenue}
+                </div>
+                {variation !== controlVariation && (
+                  <>
+                    <div className="text-sm">
+                      <span className={`${results[variation].revenue_uplift?.startsWith('+') ? 'text-green-600' : 'text-red-600'}`}>
+                        {results[variation].revenue_uplift}
+                      </span>
+                    </div>
+                    <div className="text-sm text-gray-500">
+                      {results[variation].revenue_confidence}% conf.
+                    </div>
+                  </>
+                )}
+              </TableCell>
+            </TableRow>
+          );
+        })}
+      </TableBody>
+    </Table>
   );
 }
