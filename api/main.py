@@ -73,6 +73,8 @@ async def get_metrics(data: MetricsRequest):
 @app.post("/analyze")
 async def analyze_data(data: TestData):
     try:
+        print("Received data:", data.dict())
+        
         overall_data_list = []
         if isinstance(data.overall_data, dict):
             if 'content' in data.overall_data:
@@ -88,7 +90,7 @@ async def analyze_data(data: TestData):
                 if key in item and isinstance(item[key], str):
                     item[key] = float(item[key].replace(',', ''))
             if 'revenue' in item and isinstance(item['revenue'], str):
-                item[key] = float(item['revenue'].replace(',', ''))
+                item['revenue'] = float(item['revenue'].replace(',', ''))
 
         analyzer = ABTestAnalyzer()
         analyzer.load_overall_data(overall_data_list)
@@ -102,11 +104,6 @@ async def analyze_data(data: TestData):
         return formatted_results
     except Exception as e:
         print("Error processing data:", str(e))
-        print("Data structure:", json.dumps({
-            "overall_data_type": str(type(data.overall_data)),
-            "transaction_data_type": str(type(data.transaction_data)),
-            "filters": data.filters
-        }, indent=2))
         raise HTTPException(status_code=400, detail=str(e))
 
 @app.post("/revenue-radar")
