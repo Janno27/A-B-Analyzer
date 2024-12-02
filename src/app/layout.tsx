@@ -1,28 +1,29 @@
-import './globals.css';
-import { Inter } from 'next/font/google';
-import Providers from './providers';
+import { Inter } from "next/font/google"
+import { cn } from "@/lib/utils"
+import { Sidebar } from "@/components/layout/sidebar"
+import "@/styles/globals.css"
 
-const inter = Inter({ subsets: ['latin'] });
-
-export const metadata = {
-  title: 'A/B Test Analyzer',
-  description: 'Analyze your A/B test results',
-};
+const inter = Inter({ subsets: ["latin"] })
 
 export default function RootLayout({
   children,
 }: {
-  children: React.ReactNode;
+  children: React.ReactNode
 }) {
   return (
     <html lang="en">
-      <body className={inter.className}>
-        <Providers>
-          <main className="min-h-screen bg-background">
-            {children}
-          </main>
-        </Providers>
+      <body className={cn("min-h-screen bg-background font-sans antialiased", inter.className)}>
+        <div className="flex min-h-screen">
+          <div className="hidden lg:block lg:w-72 lg:border-r">
+            <div className="h-full py-6">
+              <Sidebar />
+            </div>
+          </div>
+          <div className="flex-1">
+            <main className="h-full">{children}</main>
+          </div>
+        </div>
       </body>
     </html>
-  );
+  )
 }
