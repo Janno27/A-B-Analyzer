@@ -1,9 +1,5 @@
-import ABTestInterface from '@/components/test/ABTestInterface'
+import { redirect } from "next/navigation"
 
-export default function Home() {
-  return (
-    <main className="min-h-screen p-8">
-      <ABTestInterface />
-    </main>
-  )
+export default function HomePage() {
+  redirect("/playground/overview")
 }
