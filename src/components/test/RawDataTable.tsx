@@ -1,115 +1,229 @@
-import { useState } from 'react'
-import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { ScrollArea } from '@/components/ui/scroll-area'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { Switch } from '@/components/ui/switch'
-import { Label } from '@/components/ui/label'
+'use client';
 
-interface RawDataTableProps {
-  data: Record<string, any>
+import React from 'react';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import {
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from "@/components/ui/tabs";
+import { Label } from "@/components/ui/label";
+
+type DataItem = {
+  variation: string;
+  device_category: string;
+  transaction_id: string;
+  item_category2: string;
+  item_name: string;
+  item_bundle: string;
+  item_name_simple: string;
+  quantity: string;
+  revenue: string | number;
+  f0_: string;
 }
 
-export const RawDataTable = ({ data }: RawDataTableProps) => {
-  const [isAggregated, setIsAggregated] = useState(false)
+interface RawDataTableProps {
+  data: {
+    raw_data: {
+      raw_data: {
+        [key: string]: DataItem[];
+      }
+    }
+  };
+  currency?: string;
+  locale?: string;
+}
+
+export function RawDataTable({ 
+  data, 
+  currency = 'BRL',
+  locale = 'pt-BR'
+}: RawDataTableProps) {
+  const [isAggregated, setIsAggregated] = React.useState(true);
   
-  // Récupérer les variations depuis la structure de données
-  const variations = Object.keys(data)
-
-  const columns = isAggregated ? [
-    { key: 'transaction_id', label: 'Transaction ID' },
-    { key: 'main_product', label: 'Products' },
-    { key: 'item_categories', label: 'Categories' },
-    { key: 'quantity', label: 'Total Quantity' },
-    { key: 'revenue', label: 'Total Revenue' }
-  ] : [
-    { key: 'transaction_id', label: 'Transaction ID' },
-    { key: 'main_product', label: 'Product' },
-    { key: 'item_categories', label: 'Categories' },
-    { key: 'quantity', label: 'Quantity' },
-    { key: 'revenue', label: 'Revenue' }
-  ]
-
-  const formatValue = (value: any) => {
-    if (!value) return '-'
-    if (Array.isArray(value)) return value.join(', ')
-    return value.toString()
+  // Extraire les données brutes
+  const rawData = data?.raw_data?.raw_data;
+  
+  if (!rawData) {
+    return <div className="p-4 text-center">Aucune donnée disponible</div>;
   }
 
-  return (
-    <Card>
-      <CardHeader>
-        <div className="flex items-center justify-between">
-          <CardTitle>Raw Data</CardTitle>
-          <div className="space-y-4">
-            <div className="flex items-center space-x-2">
-              <Switch
-                id="view-mode"
-                checked={isAggregated}
-                onCheckedChange={setIsAggregated}
-              />
-              <Label htmlFor="view-mode">
-                {isAggregated ? 'Aggregated' : 'Raw'} View
-              </Label>
-            </div>
-          </div>
-        </div>
-      </CardHeader>
-      <CardContent>
-        <Tabs defaultValue={variations[0]}>
-          <div className="flex justify-end mb-4">
-            <TabsList>
-              {variations.map((variation) => (
-                <TabsTrigger key={variation} value={variation}>
-                  {variation.replace(/[\[\]_#included]/g, ' ').trim()}
-                </TabsTrigger>
-              ))}
-            </TabsList>
-          </div>
+  // Get unique variations
+  const variations = Object.keys(rawData);
 
+  if (variations.length === 0) {
+    return <div className="p-4 text-center">Aucune variation trouvée dans les données</div>;
+  }
+
+  // Group by transaction_id within each variation
+  const groupByTransaction = (items: DataItem[]) => {
+    return items.reduce<Record<string, DataItem[]>>((acc, item) => {
+      if (!acc[item.transaction_id]) {
+        acc[item.transaction_id] = [];
+      }
+      acc[item.transaction_id].push(item);
+      return acc;
+    }, {});
+  };
+
+  const normalizeNumber = (value: string | number): number => {
+    if (typeof value === 'number') return value;
+    
+    // Détecter le format
+    const hasCommaDecimal = value.includes(',') && value.indexOf(',') > value.indexOf('.');
+    const hasDotDecimal = value.includes('.') && value.indexOf('.') > value.indexOf(',');
+    
+    // Nettoyer la chaîne
+    let cleanValue = value.replace(/[^0-9.,]/g, '');
+    
+    if (hasCommaDecimal) {
+      // Format européen/brésilien (1.234,56)
+      cleanValue = cleanValue.replace('.', '').replace(',', '.');
+    } else if (hasDotDecimal) {
+      // Format anglais (1,234.56)
+      cleanValue = cleanValue.replace(',', '');
+    } else if (cleanValue.includes(',')) {
+      // Si seule virgule, supposer format européen/brésilien
+      cleanValue = cleanValue.replace(',', '.');
+    }
+    
+    const number = parseFloat(cleanValue);
+    return isNaN(number) ? 0 : number;
+  };
+
+  const formatRevenue = (revenue: string | number): string => {
+    try {
+      const numericValue = normalizeNumber(revenue);
+      
+      return new Intl.NumberFormat(locale, {
+        style: 'currency',
+        currency: currency,
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2
+      }).format(numericValue);
+    } catch (e) {
+      // Fournir un format par défaut basé sur la devise
+      const defaultFormat = {
+        'BRL': 'R$ 0,00',
+        'EUR': '€0,00',
+        'USD': '$0.00'
+      }[currency] || '0.00';
+      
+      return defaultFormat;
+    }
+  };
+
+  return (
+    <div className="w-full space-y-4">
+      <div className="flex items-center space-x-2">
+        <button
+          role="switch"
+          id="aggregation-mode"
+          aria-checked={isAggregated}
+          onClick={() => setIsAggregated(!isAggregated)}
+          className={`
+            relative inline-flex h-6 w-11 items-center rounded-full
+            transition-colors focus-visible:outline-none focus-visible:ring-2
+            focus-visible:ring-offset-2 focus-visible:ring-offset-white
+            ${isAggregated ? 'bg-blue-600' : 'bg-gray-200'}
+          `}
+        >
+          <span
+            className={`
+              ${isAggregated ? 'translate-x-6' : 'translate-x-1'}
+              inline-block h-4 w-4 transform rounded-full
+              bg-white transition-transform
+            `}
+          />
+        </button>
+        <Label htmlFor="aggregation-mode">
+          {isAggregated ? 'Données agrégées par transaction' : 'Données brutes'}
+        </Label>
+      </div>
+
+      <Tabs defaultValue={variations[0]} className="w-full">
+        <TabsList className="grid w-full" style={{ gridTemplateColumns: `repeat(${variations.length}, 1fr)` }}>
           {variations.map((variation) => (
+            <TabsTrigger key={variation} value={variation}>
+              {variation}
+            </TabsTrigger>
+          ))}
+        </TabsList>
+        
+        {variations.map((variation) => {
+          const transactionGroups = groupByTransaction(rawData[variation]);
+          
+          return (
             <TabsContent key={variation} value={variation}>
-              <ScrollArea className="h-[600px] rounded-md border">
+              <div className="rounded-md border">
                 <Table>
-                  <TableHeader className="sticky top-0 bg-background">
+                  <TableHeader>
                     <TableRow>
-                      {columns.map((col) => (
-                        <TableHead key={col.key}>{col.label}</TableHead>
-                      ))}
+                      <TableHead className="w-[120px]">Transaction ID</TableHead>
+                      <TableHead>Device</TableHead>
+                      <TableHead>Category</TableHead>
+                      <TableHead>Products</TableHead>
+                      <TableHead className="w-[100px]">Quantity</TableHead>
+                      <TableHead className="w-[120px]">Revenue</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {isAggregated ? (
-                      <TableRow>
-                        {columns.map((col) => (
-                          <TableCell key={col.key}>
-                            {formatValue(data[variation]?.highest_transaction?.[col.key])}
-                          </TableCell>
-                        ))}
-                      </TableRow>
-                    ) : (
-                      [
-                        data[variation]?.highest_transaction,
-                        data[variation]?.lowest_transaction
-                      ].filter(Boolean).map((transaction, index) => (
-                        <TableRow key={index}>
-                          {columns.map((col) => (
-                            <TableCell key={col.key}>
-                              {formatValue(transaction[col.key])}
+                      Object.entries(transactionGroups).map(([transactionId, items]) => {
+                        const totalRevenue = items.reduce((sum, item) => 
+                          sum + normalizeNumber(item.revenue), 0);
+                        
+                        const totalQuantity = items.reduce((sum, item) => 
+                          sum + parseInt(item.quantity || '0'), 0);
+                        
+                        return (
+                          <TableRow key={transactionId}>
+                            <TableCell className="font-medium">{transactionId}</TableCell>
+                            <TableCell>{items[0].device_category}</TableCell>
+                            <TableCell>
+                              {[...new Set(items.map(item => item.item_category2))].join(', ')}
                             </TableCell>
-                          ))}
+                            <TableCell>
+                              <ul className="list-disc list-inside">
+                                {items.map((item, idx) => (
+                                  <li key={idx}>
+                                    {item.item_name_simple} {item.item_bundle && `(${item.item_bundle})`}
+                                  </li>
+                                ))}
+                              </ul>
+                            </TableCell>
+                            <TableCell>{totalQuantity}</TableCell>
+                            <TableCell>{formatRevenue(totalRevenue)}</TableCell>
+                          </TableRow>
+                        );
+                      })
+                    ) : (
+                      rawData[variation].map((item, index) => (
+                        <TableRow key={`${item.transaction_id}-${index}`}>
+                          <TableCell className="font-medium">{item.transaction_id}</TableCell>
+                          <TableCell>{item.device_category}</TableCell>
+                          <TableCell>{item.item_category2}</TableCell>
+                          <TableCell>{item.item_name_simple}</TableCell>
+                          <TableCell>{item.quantity}</TableCell>
+                          <TableCell>{formatRevenue(item.revenue)}</TableCell>
                         </TableRow>
                       ))
                     )}
                   </TableBody>
                 </Table>
-              </ScrollArea>
+              </div>
             </TabsContent>
-          ))}
-        </Tabs>
-      </CardContent>
-    </Card>
-  )
+          );
+        })}
+      </Tabs>
+    </div>
+  );
 }
-
-export default RawDataTable

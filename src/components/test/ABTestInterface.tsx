@@ -41,6 +41,7 @@ export default function ABTestInterface() {
     device_category: [],
     item_category2: []
   })
+  const [radarData, setRadarData] = useState<any[]>([])
 
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>, type: 'overall' | 'transaction') => {
     const file = event.target.files?.[0]
@@ -125,6 +126,9 @@ export default function ABTestInterface() {
 
       const results = await response.json()
       setResults(results)
+      if (results.radar_data) {
+        setRadarData(results.radar_data)
+      }
       setError(null)
     } catch (err: any) {
       setError(`Erreur lors de l'analyse: ${err.message}`)
@@ -211,12 +215,23 @@ export default function ABTestInterface() {
             <TabsContent value="overview">
               <Card className="mb-6">
                 <CardContent>
-                  <ResultsTable results={results} />
+                <ResultsTable 
+                  overallData={overallData}
+                  transactionData={transactionData}
+                  filters={filters}
+                  currency={currency}
+                />
                 </CardContent>
               </Card>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <RevenueRadarChart data={results} />
+                <RevenueRadarChart 
+                  overallData={overallData?.content}
+                  transactionData={transactionData?.content}
+                  filters={filters}
+                  currency={currency}
+                  locale={currency === 'EUR' ? 'fr-FR' : 'pt-BR'}
+                />
                 <OutliersCard data={results} />
               </div>
             </TabsContent>
@@ -230,7 +245,16 @@ export default function ABTestInterface() {
             </TabsContent>
 
             <TabsContent value="revenue">
-              Revenue content
+              <div className="space-y-6">
+                <RevenueRadarChart 
+                  overallData={overallData?.content}
+                  transactionData={transactionData?.content}
+                  filters={filters}
+                  currency={currency}
+                  locale={currency === 'EUR' ? 'fr-FR' : 'pt-BR'}
+                />
+                {/* Vous pouvez ajouter d'autres composants liés aux revenus ici */}
+              </div>
             </TabsContent>
 
             <TabsContent value="raw">

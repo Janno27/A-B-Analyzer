@@ -1,6 +1,6 @@
 import pandas as pd
 import numpy as np
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, List, Tuple, Optional, Union
 from scipy import stats
 
 class ABTestAnalyzer:
@@ -177,11 +177,19 @@ class ABTestAnalyzer:
                 self.transaction_data['variation'] == variation
             ].copy()
             
-            # Calculs de base
+            # Grouper les transactions pour avoir le revenue total
+            transaction_metrics_grouped = transaction_metrics.groupby('transaction_id').agg({
+                'revenue': 'sum',
+                'quantity': 'sum',
+                'item_name_simple': lambda x: list(x),
+                'item_category2': lambda x: list(set(x))
+            }).reset_index()
+
+            # Calculs de base avec les transactions groupées
             users = overall_metrics['users']
             add_to_carts = overall_metrics['user_add_to_carts']
-            transactions = len(transaction_metrics['transaction_id'].unique())
-            revenue = transaction_metrics['revenue'].sum()
+            transactions = len(transaction_metrics_grouped['transaction_id'].unique())
+            revenue = transaction_metrics_grouped['revenue'].sum()
 
             # Calcul des taux
             add_to_cart_rate = (add_to_carts / users) * 100 if users > 0 else 0
@@ -196,27 +204,19 @@ class ABTestAnalyzer:
             }
 
             # Calcul des transactions extrêmes
-            if len(transaction_metrics) > 0:
-                # Grouper les transactions
-                transactions_grouped = transaction_metrics.groupby('transaction_id').agg({
-                    'revenue': 'sum',
-                    'quantity': 'sum',
-                    'item_name_simple': lambda x: list(x),
-                    'item_category2': lambda x: list(set(x))
-                }).reset_index()
-
-                # Plus haute transaction
-                highest_trans = transactions_grouped.nlargest(1, 'revenue').iloc[0]
+            if len(transaction_metrics_grouped) > 0:
+                # Plus haute transaction (déjà groupée)
+                highest_trans = transaction_metrics_grouped.nlargest(1, 'revenue').iloc[0]
                 highest_transaction = {
                     'transaction_id': str(highest_trans['transaction_id']),
-                    'revenue': float(highest_trans['revenue']),
+                    'revenue': float(highest_trans['revenue']),  # Revenue total de la transaction
                     'quantity': int(highest_trans['quantity']),
                     'main_product': highest_trans['item_name_simple'][0],
                     'item_categories': list(highest_trans['item_category2'])
                 }
 
-                # Plus basse transaction
-                lowest_trans = transactions_grouped.nsmallest(1, 'revenue').iloc[0]
+                # Plus basse transaction (déjà groupée)
+                lowest_trans = transaction_metrics_grouped.nsmallest(1, 'revenue').iloc[0]
                 lowest_transaction = {
                     'transaction_id': str(lowest_trans['transaction_id']),
                     'revenue': float(lowest_trans['revenue']),
@@ -273,7 +273,7 @@ class ABTestAnalyzer:
 
                 # Revenue (Mann-Whitney test)
                 control_revenue = control_transactions.groupby('transaction_id')['revenue'].sum()
-                variation_revenue = transaction_metrics.groupby('transaction_id')['revenue'].sum()
+                variation_revenue = transaction_metrics_grouped.groupby('transaction_id')['revenue'].sum()
                 
                 revenue_uplift, revenue_confidence = self.calculate_statistical_significance(
                     control_revenue,
@@ -359,3 +359,119 @@ class ABTestAnalyzer:
             return {
                 "raw_data": result
             }
+
+    def get_revenue_radar_data(self, ranges: List[Dict[str, Union[float, str]]]) -> Dict:
+        variations = self.transaction_data['variation'].unique()
+        control_variation = next(v for v in variations if 'control' in v.lower())
+        variation_data = {}
+
+        for variation in variations:
+            variation_data[variation] = self.transaction_data[
+                self.transaction_data['variation'] == variation
+            ]
+
+        result = []
+        for range_info in ranges:
+            range_data = {
+                'range': range_info['label'],
+                'revenues': {},
+                'transactions': {},
+                'metrics': {}
+            }
+            
+            # Utiliser les ranges dynamiques
+            control_transactions = self.get_range_metrics(
+                variation_data[control_variation], 
+                self.overall_data[self.overall_data['variation'] == control_variation],
+                range_info['min'],
+                range_info['max']
+            )
+            
+            for variation in variations:
+                metrics = self.get_range_metrics(
+                    variation_data[variation], 
+                    self.overall_data[self.overall_data['variation'] == variation],
+                    range_info['min'],
+                    range_info['max']
+                )
+                
+                range_data['revenues'][variation] = metrics['revenue']
+                range_data['transactions'][variation] = metrics['transactions']
+                
+                # Calculer les uplifts et significativité seulement pour les variations
+                if variation != control_variation:
+                    revenue_uplift, revenue_conf = self.calculate_statistical_significance(
+                        control_transactions['revenue_data'],
+                        metrics['revenue_data'],
+                        'revenue'
+                    )
+                    aov_uplift, aov_conf = self.calculate_statistical_significance(
+                        control_transactions['revenue_data'],
+                        metrics['revenue_data'],
+                        'revenue'
+                    )
+                    rpu_uplift, rpu_conf = self.calculate_statistical_significance(
+                        control_transactions['rpu_data'],
+                        metrics['rpu_data'],
+                        'revenue'
+                    )
+                else:
+                    revenue_uplift = revenue_conf = aov_uplift = aov_conf = rpu_uplift = rpu_conf = 0
+                
+                range_data['metrics'][variation] = {
+                    'aov': metrics['aov'],
+                    'rpu': metrics['rpu'],
+                    'transactions': metrics['transactions'],
+                    'transaction_share': metrics['transaction_share'],
+                    'revenue_uplift': revenue_uplift,
+                    'revenue_confidence': revenue_conf,
+                    'aov_uplift': aov_uplift,
+                    'aov_confidence': aov_conf,
+                    'rpu_uplift': rpu_uplift,
+                    'rpu_confidence': rpu_conf
+                }
+            
+            result.append(range_data)
+        
+        return result
+
+    def get_range_metrics(self, df: pd.DataFrame, overall_df: pd.DataFrame, min_val: float, max_val: float) -> Dict:
+        """Helper function to calculate metrics for a specific range and variation"""
+        # D'abord, grouper les transactions pour avoir le revenue total par transaction
+        transactions_grouped = df.groupby('transaction_id').agg({
+            'revenue': 'sum',  # Somme du revenue par transaction
+            'quantity': 'sum'
+        }).reset_index()
+        
+        if max_val == float('inf'):
+            # Pour le range 2000+, prendre tout ce qui est strictement supérieur à 2000
+            range_transactions = transactions_grouped[transactions_grouped['revenue'] > min_val]
+        else:
+            # Pour tous les autres ranges
+            range_transactions = transactions_grouped[
+                (transactions_grouped['revenue'] >= min_val) & 
+                (transactions_grouped['revenue'] <= max_val)
+            ]
+        
+        total_transactions = len(transactions_grouped)  # Total des transactions uniques
+        range_transactions_count = len(range_transactions)
+        total_revenue = float(range_transactions['revenue'].sum()) if len(range_transactions) > 0 else 0
+        users = float(overall_df['users'].iloc[0])
+        
+        aov = total_revenue / range_transactions_count if range_transactions_count > 0 else 0
+        rpu = total_revenue / users if users > 0 else 0
+
+        # Créer les données pour les tests statistiques
+        revenue_data = range_transactions['revenue'] if len(range_transactions) > 0 else pd.Series([])
+        n_samples = int(users)
+        rpu_data = pd.Series([rpu] * n_samples) if users > 0 else pd.Series([])
+        
+        return {
+            'revenue': total_revenue,
+            'transactions': range_transactions_count,
+            'transaction_share': range_transactions_count / total_transactions if total_transactions > 0 else 0,
+            'aov': aov,
+            'rpu': rpu,
+            'revenue_data': revenue_data,
+            'rpu_data': rpu_data
+        }

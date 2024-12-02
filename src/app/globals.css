@@ -19,3 +19,26 @@ body {
   background: var(--background);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+/* styles.css */
+.tooltip-overlay {
+  position: absolute;
+  background-color: white;
+  border-radius: 0.5rem;
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+  padding: 1rem;
+  z-index: 1000;
+  pointer-events: none; /* Pour éviter que le tooltip interfère avec les interactions de la souris */
+}
+
+.tooltip-arrow {
+  position: absolute;
+  width: 0;
+  height: 0;
+  border-left: 0.5rem solid transparent;
+  border-right: 0.5rem solid transparent;
+  border-bottom: 0.5rem solid white;
+  top: -0.5rem; /* Positionne le triangle au-dessus du tooltip */
+  left: 50%;
+  transform: translateX(-50%);
+}

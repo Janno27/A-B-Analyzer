@@ -1,224 +1,338 @@
-// src/components/test/RevenueRadarChart.tsx
-'use client'
+'use client';
 
-import { Card, CardHeader, CardTitle } from '@/components/ui/card'
-import dynamic from 'next/dynamic'
+import React, { useEffect, useState } from 'react';
+import {
+  RadarChart,
+  PolarGrid,
+  PolarAngleAxis,
+  PolarRadiusAxis,
+  Radar,
+  Legend,
+  ResponsiveContainer,
+  Tooltip
+} from 'recharts';
+import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
+import { Loader2 } from "lucide-react";
+import { VARIATION_COLORS } from '@/lib/constants';
 
-const ResponsiveRadar = dynamic(() => import('@nivo/radar').then(mod => mod.ResponsiveRadar), {
-  ssr: false,
-  loading: () => (
-    <div className="h-[320px] flex items-center justify-center">
-      Chargement du graphique...
-    </div>
-  )
-})
+// Ajout des fonctions utilitaires
+const formatCurrency = (value: number, currency: string, locale: string) => 
+  new Intl.NumberFormat(locale, {
+    style: 'currency',
+    currency,
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0,
+  }).format(value);
 
-interface RevenueDistributionProps {
-  data: any;
-  currency?: 'EUR' | 'BRL';
-}
+const formatPercent = (value: number, locale: string) => 
+  new Intl.NumberFormat(locale, {
+    style: 'percent',
+    minimumFractionDigits: 1,
+    maximumFractionDigits: 1,
+  }).format(value);
 
-export const RevenueRadarChart = ({ data, currency = 'EUR' }: RevenueDistributionProps) => {
-  const currencySymbol = currency === 'EUR' ? '€' : 'R$';
+// Event emitter pour la communication entre composants
+export const tooltipEventEmitter = {
+  listeners: new Set<Function>(),
+  emit(data: any) {
+    this.listeners.forEach((listener) => listener(data));
+  },
+  subscribe(listener: Function) {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
+};
 
-  const transformData = () => {
-    const ranges = ['0-500', '501-1000', '1001-2000', '2000+'];
-    
-    // Créer la structure de données pour le radar chart
-    return ranges.map(range => {
-      // Retirer la devise du range pour la recherche dans les données
-      const rangeKey = range;
-      
-      // Créer un objet avec le range et les valeurs pour chaque variation
-      const rangeData: any = {
-        range: `${range} ${currencySymbol}`
-      };
-      
-      // Ajouter les données pour chaque variation
-      Object.keys(data).forEach(variation => {
-        const cleanVariationName = variation.replace(/[\[\]_#included]/g, ' ').trim();
-        rangeData[cleanVariationName] = data[variation]?.revenue_distribution?.[rangeKey]?.count || 0;
-      });
-      
-      return rangeData;
-    });
+type Range = {
+  min: number;
+  max: number;
+  label: string;
+};
+
+type Props = {
+  overallData: any[];
+  transactionData: any[];
+  filters: {
+    device_category: string[];
+    item_category2: string[];
+  };
+  currency: string;
+  locale: string;
+  customRanges?: Range[];  // Optionnel : pour permettre des ranges personnalisés
+};
+
+export const RevenueRadarChart = ({ 
+  overallData, 
+  transactionData, 
+  filters,
+  currency,
+  locale,
+  customRanges
+}: Props) => {
+  const [chartData, setChartData] = useState<any[]>([]);
+  const [variations, setVariations] = useState<string[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Fonction utilitaire pour arrondir les nombres de manière intelligente
+  const smartRound = (value: number): number => {
+    const magnitude = Math.pow(10, Math.floor(Math.log10(value)));
+    const normalized = value / magnitude;
+    let rounded: number;
+
+    if (normalized < 2) rounded = Math.round(normalized * 2) / 2;
+    else if (normalized < 5) rounded = Math.round(normalized);
+    else rounded = Math.ceil(normalized / 5) * 5;
+
+    return rounded * magnitude;
   };
 
-  const getRangeStats = (range: string, variation: string) => {
-    // Retirer le symbole de devise pour obtenir la clé correcte
-    const rangeKey = range.replace(` ${currencySymbol}`, '');
-    const rangeData = data[variation]?.revenue_distribution?.[rangeKey];
-    
-    if (!rangeData) return null;
-    
-    // Calcul du total des transactions pour cette variation
-    const totalTransactions = Object.values(data[variation].revenue_distribution)
-      .reduce((sum: any, dist: any) => sum + (dist.count || 0), 0);
-    
-    // Trouver la variation de contrôle
-    const controlVar = Object.keys(data).find(k => k.toLowerCase().includes('control'));
-    const controlData = controlVar ? data[controlVar].revenue_distribution?.[rangeKey] : null;
-    
-    // Calcul de l'uplift
-    const uplift = controlData?.count ? 
-      ((rangeData.count - controlData.count) / controlData.count * 100) : 0;
-    
-    return {
-      basicMetrics: {
-        transactions: rangeData.count,
-        transactionsPercentage: (rangeData.count / totalTransactions * 100),
-        revenue: rangeData.total_revenue,
-        aov: rangeData.aov
-      },
-      comparison: !variation.toLowerCase().includes('control') ? {
-        uplift,
-        diffFromControl: rangeData.count - (controlData?.count || 0)
-      } : null,
-      categories: Object.entries(rangeData.categories || {})
-        .sort(([, a], [, b]) => (b as number) - (a as number))
-        .slice(0, 3)
+  // Calcul intelligent des ranges
+  const calculateSmartRanges = (transactions: any[]): Range[] => {
+    // Extraire et trier les revenus
+    const revenues = transactions
+      .map(t => typeof t.revenue === 'string' ? parseFloat(t.revenue.replace(/[^0-9.-]+/g, '')) : t.revenue)
+      .filter(r => !isNaN(r) && r > 0)
+      .sort((a, b) => a - b);
+
+    if (revenues.length === 0) {
+      return [
+        { min: 0, max: 500, label: '0-500' },
+        { min: 501, max: 1000, label: '501-1000' },
+        { min: 1001, max: 2000, label: '1001-2000' },
+        { min: 2000, max: Infinity, label: '2000+' }
+      ];
+    }
+
+    // Calculer les percentiles pour une distribution plus équilibrée
+    const getPercentile = (arr: number[], percentile: number) => {
+      const index = Math.ceil((percentile / 100) * arr.length) - 1;
+      return arr[index];
     };
+
+    const p25 = getPercentile(revenues, 25);
+    const p50 = getPercentile(revenues, 50);
+    const p75 = getPercentile(revenues, 75);
+    const p90 = getPercentile(revenues, 90);
+
+    // Arrondir les valeurs pour des ranges plus "propres"
+    const r25 = smartRound(p25);
+    const r50 = smartRound(p50);
+    const r75 = smartRound(p75);
+    const r90 = smartRound(p90);
+
+    // Créer les ranges avec des labels formatés
+    const formatLabel = (min: number, max: number | string = 'inf') => {
+      if (max === 'inf') return `${formatCurrency(min, currency, locale)}+`;
+      return `${formatCurrency(min, currency, locale)} - ${formatCurrency(max as number, currency, locale)}`;
+    };
+
+    return [
+      { min: 0, max: r25, label: formatLabel(0, r25) },
+      { min: r25, max: r50, label: formatLabel(r25, r50) },
+      { min: r50, max: r75, label: formatLabel(r50, r75) },
+      { min: r75, max: r90, label: formatLabel(r75, r90) },
+      { min: r90, max: Infinity, label: formatLabel(r90) }
+    ];
   };
 
-  console.log('Revenue Distribution Data:', {
-    originalData: data,
-    transformedData: transformData(),
-    sampleVariation: data[Object.keys(data)[0]]
-  });
+  useEffect(() => {
+    const fetchData = async () => {
+      if (!overallData || !transactionData) return;
 
-  // Mise à jour du rendu du tooltip pour utiliser la nouvelle structure
-  return (
-    <Card className="h-[400px]">
-      <CardHeader>
-        <CardTitle>Revenue Distribution</CardTitle>
-      </CardHeader>
-      <div className="h-[320px]">
-        <ResponsiveRadar
-          data={transformData()}
-          keys={Object.keys(data).map(k => k.replace(/[\[\]_#included]/g, ' ').trim())}
-          indexBy="range"
-          maxValue="auto"
-          margin={{ top: 50, right: 80, bottom: 60, left: 80 }}
-          curve="linearClosed"
-          borderWidth={2}
-          borderColor={{ from: 'color' }}
-          gridLevels={5}
-          gridShape="circular"
-          gridLabelOffset={36}
-          enableDots={true}
-          dotSize={10}
-          dotColor={{ theme: 'background' }}
-          dotBorderWidth={2}
-          dotBorderColor={{ from: 'color' }}
-          colors={['#60a5fa', '#4ade80', '#a78bfa']}
-          fillOpacity={0.25}
-          blendMode="multiply"
-          motionConfig="gentle"
-          tooltip={({ index, data: pointData }) => {
-            const range = index.replace(` ${currencySymbol}`, '');
-            return (
-              <div className="bg-white p-4 rounded-lg shadow-lg border text-sm min-w-[350px]">
-                <div className="font-semibold mb-3 pb-2 border-b">
-                  Revenue Range: {index}
+      setLoading(true);
+      try {
+        // Convertir Infinity en string pour la sérialisation JSON
+        const ranges = (customRanges || calculateSmartRanges(transactionData))
+          .map(range => ({
+            ...range,
+            max: range.max === Infinity ? "Infinity" : range.max
+          }));
+
+        const response = await fetch('http://localhost:8000/revenue-radar', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            overall_data: overallData,
+            transaction_data: transactionData,
+            filters: filters || {},
+            currency: currency || 'EUR',
+            ranges: ranges
+          }),
+        });
+
+        if (!response.ok) throw new Error('Failed to fetch revenue radar data');
+
+        const result = await response.json();
+        console.log("Received data:", result);
+
+        if (result.data && result.data.length > 0) {
+          const uniqueVariations = Object.keys(result.data[0].revenues || {});
+          setVariations(uniqueVariations);
+          setChartData(result.data);
+        }
+      } catch (err) {
+        console.error('Error:', err);
+        setError(err instanceof Error ? err.message : 'Unknown error');
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchData();
+  }, [overallData, transactionData, filters, currency, customRanges, locale]);
+
+  const CustomTooltip = ({ active, payload, coordinate }: { 
+    active?: boolean, 
+    payload?: any[], 
+    coordinate?: { x: number, y: number } 
+  }) => {
+    if (!active || !payload || !payload.length || !coordinate) return null;
+
+    const data = payload[0].payload;
+    
+    // Identifier la variation de contrôle
+    const controlVariation = Object.keys(data.metrics).find(v => v.toLowerCase().includes('control'));
+
+    // Trier les variations pour avoir Control en premier
+    const sortedVariations = Object.entries(data.metrics).sort(([varA], [varB]) => {
+      if (varA.toLowerCase().includes('control')) return -1;
+      if (varB.toLowerCase().includes('control')) return 1;
+      return varA.localeCompare(varB);
+    });
+
+    return (
+      <div 
+        className="bg-white p-4 rounded-lg shadow-lg border min-w-[600px] absolute pointer-events-none"
+        style={{ 
+          left: coordinate.x,
+          top: coordinate.y,
+          transform: 'translate(16px, -100%)'
+        }}
+      >
+        <h3 className="font-medium text-lg mb-2">{data.range}</h3>
+        <div className="space-y-4">
+          {sortedVariations.map(([variation, metrics]: [string, any], index) => (
+            <div key={variation} className="space-y-1">
+              <h4 className="font-medium text-sm" style={{ color: VARIATION_COLORS[index].stroke }}>
+                {variation.split('_').pop()}
+              </h4>
+              <div className="grid grid-cols-[100px_1fr] gap-x-4 text-sm">
+                <span>Transactions:</span>
+                <span>{metrics.transactions} ({formatPercent(metrics.transaction_share, locale)})</span>
+
+                <span>Revenue:</span>
+                <div className="whitespace-nowrap">
+                  {formatCurrency(data.revenues[variation], currency, locale)}
+                  {variation !== controlVariation && (
+                    <>
+                      <span className={metrics.revenue_uplift >= 0 ? "text-green-600" : "text-red-600"}>
+                        {' '}({formatPercent(metrics.revenue_uplift/100, locale)})
+                      </span>
+                      <span className="text-gray-500">
+                        {' '}| {formatPercent(metrics.revenue_confidence/100, locale)} conf.
+                      </span>
+                    </>
+                  )}
                 </div>
-                
-                {Object.keys(data).map(variation => {
-                  const varName = variation.replace(/[\[\]_#included]/g, ' ').trim();
-                  const stats = getRangeStats(range, variation);
-                  if (!stats) return null;
 
-                  const {basicMetrics, comparison} = stats;
+                <span>AOV:</span>
+                <div className="whitespace-nowrap">
+                  {formatCurrency(metrics.aov, currency, locale)}
+                  {variation !== controlVariation && (
+                    <>
+                      <span className={metrics.aov_uplift >= 0 ? "text-green-600" : "text-red-600"}>
+                        {' '}({formatPercent(metrics.aov_uplift/100, locale)})
+                      </span>
+                      <span className="text-gray-500">
+                        {' '}| {formatPercent(metrics.aov_confidence/100, locale)} conf.
+                      </span>
+                    </>
+                  )}
+                </div>
 
-                  return (
-                    <div key={variation} className="mb-4 last:mb-0">
-                      <div className="font-medium mb-2">{varName}</div>
-                      
-                      {/* Métriques de base */}
-                      <div className="space-y-2 text-sm">
-                        {/* Transactions */}
-                        <div className="grid grid-cols-2 items-center">
-                          <span className="text-gray-600">Transactions</span>
-                          <span className="text-right">
-                            {basicMetrics.transactions.toLocaleString()}
-                            <span className="text-gray-500 ml-1">
-                              ({basicMetrics.transactionsPercentage.toFixed(1)}%)
-                            </span>
-                          </span>
-                        </div>
-
-                        {/* Revenue */}
-                        <div className="grid grid-cols-2 items-center">
-                          <span className="text-gray-600">Revenue</span>
-                          <span className="text-right">{basicMetrics.revenue}</span>
-                        </div>
-
-                        {/* AOV */}
-                        <div className="grid grid-cols-2 items-center">
-                          <span className="text-gray-600">AOV</span>
-                          <span className="text-right">{basicMetrics.aov}</span>
-                        </div>
-
-                        {/* Comparaisons (seulement pour les non-Control) */}
-                        {comparison && (
-                          <div className="mt-2 pt-2 border-t">
-                            <div className="grid grid-cols-2 items-center">
-                              <span className="text-gray-600">vs Control</span>
-                              <div className="text-right">
-                                <span className={comparison.uplift >= 0 ? 'text-green-600' : 'text-red-600'}>
-                                  {comparison.uplift > 0 ? '+' : ''}{comparison.uplift.toFixed(1)}%
-                                </span>
-                                <br />
-                                <span className="text-gray-500">
-                                  ({comparison.diffFromControl > 0 ? '+' : ''}
-                                  {comparison.diffFromControl} transactions)
-                                </span>
-                              </div>
-                            </div>
-                          </div>
-                        )}
-
-                        {/* Catégories */}
-                        {stats.categories.length > 0 && (
-                          <div className="mt-2 pt-2 border-t">
-                            <div className="text-gray-600 mb-1">Top Categories:</div>
-                            {stats.categories.map(([cat, count]) => (
-                              <div key={cat} className="grid grid-cols-2 text-sm">
-                                <span className="truncate">{cat}</span>
-                                <span className="text-right">{count}</span>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
+                <span>RPU:</span>
+                <div className="whitespace-nowrap">
+                  {formatCurrency(metrics.rpu, currency, locale)}
+                  {variation !== controlVariation && (
+                    <>
+                      <span className={metrics.rpu_uplift >= 0 ? "text-green-600" : "text-red-600"}>
+                        {' '}({formatPercent(metrics.rpu_uplift/100, locale)})
+                      </span>
+                      <span className="text-gray-500">
+                        {' '}| {formatPercent(metrics.rpu_confidence/100, locale)} conf.
+                      </span>
+                    </>
+                  )}
+                </div>
               </div>
-            );
-          }}
-          legends={[
-            {
-              anchor: 'bottom',
-              direction: 'row',
-              translateY: 50,
-              itemWidth: 120,
-              itemHeight: 20,
-              itemTextColor: '#333',
-              symbolSize: 12,
-              symbolShape: 'circle',
-              effects: [
-                {
-                  on: 'hover',
-                  style: {
-                    itemTextColor: '#000',
-                    itemBackground: 'rgba(0, 0, 0, .03)'
-                  }
-                }
-              ]
-            }
-          ]}
-        />
+            </div>
+          ))}
+        </div>
       </div>
+    );
+  };
+
+  if (loading) {
+    return (
+      <Card className="w-full h-[400px]">
+        <CardContent className="flex items-center justify-center h-full">
+          <Loader2 className="h-8 w-8 animate-spin" />
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (error) {
+    return (
+      <Card className="w-full h-[400px]">
+        <CardContent className="flex items-center justify-center h-full text-sm text-red-600">
+          {error}
+        </CardContent>
+      </Card>
+    );
+  }
+
+  return (
+    <Card className="w-full h-[400px]">
+      <CardHeader>
+        <CardTitle>Revenue Distribution by Range</CardTitle>
+      </CardHeader>
+      <CardContent className="h-[320px] relative">
+        <ResponsiveContainer width="100%" height="100%">
+          <RadarChart 
+            data={chartData} 
+            onMouseLeave={() => tooltipEventEmitter.emit(null)}
+          >
+            <PolarGrid gridType="circle" />
+            <PolarAngleAxis 
+              dataKey="range"
+              tick={{ fill: '#6b7280', fontSize: 12 }}
+            />
+            <PolarRadiusAxis 
+              angle={90}
+              tickFormatter={() => ''}
+              tick={{ fontSize: 10 }}
+            />
+            {variations.map((variation, index) => (
+              <Radar
+                key={variation}
+                name={variation.split('_').pop()}
+                dataKey={`revenues.${variation}`}
+                stroke={VARIATION_COLORS[index].stroke}
+                fill={VARIATION_COLORS[index].fill}
+                fillOpacity={0.3}
+              />
+            ))}
+            <Tooltip 
+              content={<CustomTooltip />} 
+              cursor={false}  // Désactive le curseur par défaut
+              position={{ x: 0, y: 0 }}  // Position initiale
+            />
+            <Legend height={20} wrapperStyle={{ fontSize: '10px' }} />
+          </RadarChart>
+        </ResponsiveContainer>
+      </CardContent>
     </Card>
-  )
-}
+  );
+};
