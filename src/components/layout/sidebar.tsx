@@ -1,9 +1,8 @@
-"use client"
-
 import Link from "next/link"
 import { usePathname } from "next/navigation"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
+import { UserNav } from "./user-nav"
 import {
   BarChart2,
   Blocks,
@@ -24,8 +23,8 @@ export function Sidebar({ className }: SidebarProps) {
   const pathname = usePathname()
 
   return (
-    <div className={cn("pb-12", className)}>
-      <div className="space-y-4 py-4">
+    <div className={cn("relative pb-12 h-full", className)}>
+      <div className="space-y-4 py-4 h-[calc(100%-64px)]">
         <div className="px-3 py-2">
           <h2 className="mb-2 px-4 text-lg font-semibold tracking-tight">Platform</h2>
           <div className="space-y-1">
@@ -105,6 +104,17 @@ export function Sidebar({ className }: SidebarProps) {
               <Blocks className="mr-2 h-4 w-4" />
               Active Tests
             </Button>
+          </div>
+        </div>
+      </div>
+      <div className="absolute bottom-0 left-0 right-0 p-4 border-t">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center space-x-4">
+            <UserNav />
+            <div>
+              <p className="text-sm font-medium">Username</p>
+              <p className="text-xs text-muted-foreground">user@example.com</p>
+            </div>
           </div>
         </div>
       </div>
